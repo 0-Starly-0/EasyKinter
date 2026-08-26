@@ -1,7 +1,9 @@
 import tkinter as tk
 import warnings as _warn
-from PIL import Image as img, ImageTk as imgtk
+from PIL import Image as _img, ImageTk as _imgtk
+import mpv as _mpv
 import atexit as _atexit
+import ctypes
 from typing import Literal as _literal
 
 # to hide the pygame-ce message (sorry devs but a console message is just a bit of a bummer)
@@ -12,7 +14,7 @@ from pygame import mixer as _mixer, mixer_music as _mixermusic
 
 # adding this because apparently it's really useful
 __all__ = [
-    "Help"
+    "Help",
     "CreateRoot",
     "CreateToplevel",
     "BetterConfigure",
@@ -20,11 +22,12 @@ __all__ = [
     "CreateEntry",
     "CreateButton",
     "CreateMiscInputs",
-    "CreateBoolInputs"
+    "CreateBoolInputs",
     "BetterBind",
     "BetterGeometry",
     "CenterWindow",
-    "AddColorThemes"
+    "AddColorThemes",
+    "BetterChromaKey",
     "CreateCanvas",
     "CreateCanvasShapes",
     "CreateCanvasMisc",
@@ -33,16 +36,19 @@ __all__ = [
     "PlayAudio",
     "StreamAudio",
     "BetterPhotoImage",
-    "BetterImage"
+    "BetterImage",
+    "BetterVideo",
+    "CreateVideo"
 ]
 
 # also this for my sake:
-__version__ = "0.1.1"
+__version__ = "1.1.0"
 
 ############################################
-# tkinter (yay) this is where it all started
+# tkinter (yay), this is where it all started
 ############################################9
 #region all the nice and dandy EasyKinter functions 
+
 #region Code that Automatically Runs mainloop() DO NOT TOUCH
 #verifying if mainloop was called
 _MainloopCalled = False
@@ -144,7 +150,7 @@ def BetterConfigure(TargetWindow, background=None, HideTitleBar:_BoolChoices=Fal
 
     **Configs:**
         background = What the color of the widget's background will be set to.
-        HideTitleBar = Will apply overridedirect(True) to window and remove its TitleBar.
+        HideTitleBar = Will apply '.overridedirect(True)' to window and remove its TitleBar.
         ResizableWidth = Dictates wether your window can be resized horizontally.
         ResizableHeight = Dictates if your window can be resized vertically.
         ClosingFunction = Adds a custom function that runs when said window is closed.
@@ -187,7 +193,7 @@ def BetterConfigure(TargetWindow, background=None, HideTitleBar:_BoolChoices=Fal
                 _warn.warn(f"Resize attributes were skipped as the target was a '{type(TargetWindow).__name__}' and it cannot have a Resizeable attrbute. Have you tried using tk.Toplevel or tk.Tk?", category=RuntimeWarning)
 
         if ClosingFunction is not None:
-            if not isinstance(ClosingFunction, function):
+            if not callable(ClosingFunction):
                 raise TypeError("Could not add a customized function to linked window as the value given wasn't a function.") from None
             
             else:
@@ -199,7 +205,7 @@ _PackTypeChoices = _literal["Pack", "Grid", "Place"]
 _AnchorChoices = _literal["n", "s", "e", "w", "se", "sw", "ne", "nw", "center"]
 _ImgCompundChoices = _literal["Top", "Left", "Right", "Bottom", "Center"]
 _ExtraTextCustomChoices = _literal["Bold", "Italic", "Underline", "Overstrike"]
-def CreateLabel(ForWindow, Text="New Label", font="Arial", FontSize=12, OptionalFontCustom:_ExtraTextCustomChoices="", LabelImage=None, ImageCompound:_ImgCompundChoices="Center", BgColor="#f0f0f0", FgColor="#000000", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None):
+def CreateLabel(ForWindow, Text="New Label", font="Arial", FontSize=12, OptionalFontCustom:_ExtraTextCustomChoices="", LabelImage=None, ImageCompound:_ImgCompundChoices="Center", BgColor="#f0f0f0", FgColor="#000000", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None, RelWidth=None, RelHeight=None):
     """
     # This function creates and returns a custom label that can be also packed within the same function.
 
@@ -240,6 +246,8 @@ def CreateLabel(ForWindow, Text="New Label", font="Arial", FontSize=12, Optional
         Y = The absolute position of the element in your window, cannot be moved. (Height)
         RelX = The relative position of the element in your window, can be moved. (Width)
         RelY = The relative position of the element in your window, can be moved. (Height)
+        RelWidth = The relative width that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Width)
+        RelHeight = The relative height that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Height)
     """
 
     if not isinstance(ForWindow, (tk.Tk, tk.Frame, tk.Toplevel)):
@@ -263,6 +271,9 @@ def CreateLabel(ForWindow, Text="New Label", font="Arial", FontSize=12, Optional
         elif ImageCompound == "bottom":
             ImageCompound = tk.BOTTOM
 
+    if hasattr(LabelImage, 'NewImg') and LabelImage.converted:
+        LabelImage = LabelImage.NewImg
+
     newLabel = tk.Label(ForWindow, image=LabelImage, compound=ImageCompound, text=Text, font=(font, FontSize, OptionalFontCustom.lower()), bg=BgColor, fg=FgColor)
 
     if PackType is not None:
@@ -271,20 +282,31 @@ def CreateLabel(ForWindow, Text="New Label", font="Arial", FontSize=12, Optional
     if PackType is not None and PackType not in ["place", "grid", "pack"]:
         raise ValueError(f"Expected a proper packing style, but got {PackType} instead. Current packing types are 'Pack', 'Grid', or 'Place'") from None
 
-    elif PackType == "pack":
-        newLabel.pack(anchor=Anchor, padx=PadX, pady=PadY, side=Side, sticky=Sticky)
-    
+    if PackType == "pack":
+        kwargs = {
+            "anchor": Anchor, "padx": PadX, "pady": PadY, 
+            "side": Side, "sticky": Sticky
+        }
+        newLabel.pack(**{k: v for k, v in kwargs.items() if v is not None})
+
     elif PackType == "place":
-        newLabel.place(x=X, y=Y, relx=RelX, rely=RelY, anchor=Anchor)
+        kwargs = {
+            "x": X, "y": Y, "relx": RelX, "rely": RelY, 
+            "relwidth": RelWidth, "relheight": RelHeight, "anchor": Anchor
+        }
+        newLabel.place(**{k: v for k, v in kwargs.items() if v is not None})
 
     elif PackType == "grid":
-        newLabel.grid(row=Row, column=Column, padx=PadX, pady=PadY)
-    
+        kwargs = {
+            "row": Row, "column": Column, "padx": PadX, "pady": PadY
+        }
+        newLabel.grid(**{k: v for k, v in kwargs.items() if v is not None})
+        
     return newLabel
 #endregion
 
 #region Creating Text Entry Widget and Custom Keybinding Function
-def CreateEntry(ForWindow, CustomFunc=None, CustomFuncKeybind=None, PlaceHolderEnabled:_BoolChoices=True, PlaceHolderText="Insert text here...", PlaceHolderTextColor="Gray", Width=None, Font="Arial", FontSize=12, FontProperties="", borderwidth=None, bg=None, fg="#000000", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None):
+def CreateEntry(ForWindow, CustomFunc=None, CustomFuncKeybind=None, PlaceHolderEnabled:_BoolChoices=True, PlaceHolderText="Insert text here...", PlaceHolderTextColor="Gray", Width=None, Font="Arial", FontSize=12, FontProperties="", borderwidth=None, bg=None, fg="#000000", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None, RelWidth=None, RelHeight=None):
     """
     # This function automatically creates and customizes an Entry widget in tkinter. Can also additionally trigger a funtion or be automatically packed.
 
@@ -323,7 +345,9 @@ def CreateEntry(ForWindow, CustomFunc=None, CustomFuncKeybind=None, PlaceHolderE
         X = The absolute position of the element in your window, cannot be moved. (Width)
         Y = The absolute position of the element in your window, cannot be moved. (Height)
         RelX = The relative position of the element in your window, can be moved. (Width)
-        RelY = The relative position of the element in your window, can be moved. (Height)    
+        RelY = The relative position of the element in your window, can be moved. (Height)
+        RelWidth = The relative width that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Width)
+        RelHeight = The relative height that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Height)    
     """
 
     def on_entry_click(event=None):
@@ -375,20 +399,31 @@ def CreateEntry(ForWindow, CustomFunc=None, CustomFuncKeybind=None, PlaceHolderE
     if PackType is not None and PackType not in ["place", "grid", "pack"]:
         raise ValueError(f"Expected a proper packing style, but got {PackType} instead. Current packing types are 'Pack', 'Grid', or 'Place'") from None
 
-    elif PackType == "pack":
-        NewEntry.pack(anchor=Anchor, padx=PadX, pady=PadY, side=Side, sticky=Sticky)
+    if PackType == "pack":
+        kwargs = {
+            "anchor": Anchor, "padx": PadX, "pady": PadY, 
+            "side": Side, "sticky": Sticky
+        }
+        NewEntry.pack(**{k: v for k, v in kwargs.items() if v is not None})
     
     elif PackType == "place":
-        NewEntry.place(x=X, y=Y, relx=RelX, rely=RelY, anchor=Anchor)
+        kwargs = {
+            "x": X, "y": Y, "relx": RelX, "rely": RelY, 
+            "relwidth": RelWidth, "relheight": RelHeight, "anchor": Anchor
+        }
+        NewEntry.place(**{k: v for k, v in kwargs.items() if v is not None})
 
     elif PackType == "grid":
-        NewEntry.grid(row=Row if Row is not None else 0, column=Column if Column is not None else 0, padx=PadX, pady=PadY)
+        kwargs = {
+            "row": Row, "column": Column, "padx": PadX, "pady": PadY
+        }
+        NewEntry.grid(**{k: v for k, v in kwargs.items() if v is not None})
 
     return NewEntry
 #endregion
 
 #region Creating Button Widget and Custom Keybinding Function
-def CreateButton(ForWindow, Text="New Button", Image=None, Compound:_ImgCompundChoices="center", font="Arial", FontSize=12, optionalCustomization:_ExtraTextCustomChoices="", CommandFunc=None, ButtonWidth=100, ButtonHeight=30, BgColor="#f0f0f0", FgColor="#000000", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None):
+def CreateButton(ForWindow, Text="New Button", Image=None, Compound:_ImgCompundChoices="center", font="Arial", FontSize=12, optionalCustomization:_ExtraTextCustomChoices="", CommandFunc=None, ButtonWidth=100, ButtonHeight=30, BgColor="#f0f0f0", FgColor="#000000", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None, RelWidth=None, RelHeight=None):
     """
     # This function creates and returns a custom button that can be also packed within the same function.
 
@@ -430,6 +465,8 @@ def CreateButton(ForWindow, Text="New Button", Image=None, Compound:_ImgCompundC
         Y = The absolute position of the element in your window, cannot be moved. (Height)
         RelX = The relative position of the element in your window, can be moved. (Width)
         RelY = The relative position of the element in your window, can be moved. (Height)
+        RelWidth = The relative width that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Width)
+        RelHeight = The relative height that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Height)
     """
     
     if not isinstance(ForWindow, (tk.Tk, tk.Frame, tk.Toplevel)):
@@ -445,6 +482,9 @@ def CreateButton(ForWindow, Text="New Button", Image=None, Compound:_ImgCompundC
         newButton.image = TrasnparentImage
 
     else:
+        if hasattr(LabelImage, 'NewImg') and LabelImage.converted:
+            LabelImage = LabelImage.NewImg
+
         newButton = tk.Button(ForWindow, command=CommandFunc, image=Image, text=Text, compound=Compound,  font=(font, FontSize, optionalCustomization.lower()), width=ButtonWidth, height=ButtonHeight, bg=BgColor, fg=FgColor)
         newButton.image = Image
 
@@ -454,21 +494,32 @@ def CreateButton(ForWindow, Text="New Button", Image=None, Compound:_ImgCompundC
     if PackType is not None and PackType not in ["place", "grid", "pack"]:
         raise ValueError(f"Expected a proper packing style, but got {PackType} instead. Current packing types are 'Pack', 'Grid', or 'Place'") from None
 
-    elif PackType == "pack":
-        newButton.pack(anchor=Anchor, padx=PadX, pady=PadY, side=Side, sticky=Sticky)
+    if PackType == "pack":
+        kwargs = {
+            "anchor": Anchor, "padx": PadX, "pady": PadY, 
+            "side": Side, "sticky": Sticky
+        }
+        newButton.pack(**{k: v for k, v in kwargs.items() if v is not None})
     
     elif PackType == "place":
-        newButton.place(x=X, y=Y, relx=RelX, rely=RelY, anchor=Anchor)
+        kwargs = {
+            "x": X, "y": Y, "relx": RelX, "rely": RelY, 
+            "relwidth": RelWidth, "relheight": RelHeight, "anchor": Anchor
+        }
+        newButton.place(**{k: v for k, v in kwargs.items() if v is not None})
 
     elif PackType == "grid":
-        newButton.grid(row=Row, column=Column, padx=PadX, pady=PadY)
+        kwargs = {
+            "row": Row, "column": Column, "padx": PadX, "pady": PadY
+        }
+        newButton.grid(**{k: v for k, v in kwargs.items() if v is not None})
     
     return newButton
 #endregion
 
 #region Creating AplhaNumerical Input Widgets and Miscellaneous
-_InputTypeChoices = _literal["Text", "Spinbox", "Scale"]
-def CreateMiscInputs(ForWindow, InputType:_InputTypeChoices, Border=2, CustomFont="Arial", CustomFontSize=12, CustomFontExtra:_ExtraTextCustomChoices="", BgColor="#f0f0f0", FgColor="#000000", CommandKeybind=None, CommandFunction=None, TextHeight=40, TextWidth=70, SpinboxFrom=-100, SpinboxTo=100, ScaleLength=100, ScaleRepeatDelay=1, ScaleResolution=1, PackType:_PackTypeChoices=None, PadX=None, PadY=None, Anchor:_AnchorChoices="center", Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None):
+_InputTypeChoices = _literal["Text", "Spinbox", "Scale", "Listbox"]
+def CreateMiscInputs(ForWindow, InputType:_InputTypeChoices, Border=2, CustomFont="Arial", CustomFontSize=12, CustomFontExtra:_ExtraTextCustomChoices="", BgColor="#f0f0f0", FgColor="#000000", CommandKeybind=None, CommandFunction=None, TextHeight=40, TextWidth=70, SpinboxFrom=-100, SpinboxTo=100, ScaleLength=100, ScaleRepeatDelay=1, ScaleResolution=1, ScaleFrom=1, ScaleTo=100, ListBoxWidth=10, ListBoxExportselection:bool=False, ListBoxHeight=2, ListBoxSelectmode:_literal['SINGLE', 'MULTIPLE', 'BROWSE', 'EXTENDED']=tk.SINGLE, PackType:_PackTypeChoices=None, PadX=None, PadY=None, Anchor:_AnchorChoices="center", Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None, RelWidth=None, RelHeight=None):
     """
     # This function can create, pack, and set a command for other, miscellaneous Aplhanumerical input widgets and returns the widget.
 
@@ -491,12 +542,18 @@ def CreateMiscInputs(ForWindow, InputType:_InputTypeChoices, Border=2, CustomFon
         CommandFunction = The command that will be executed when pressing the respective keybind. Must have CommandKeybind to work.
 
     **Text Specific Parameters:**
-        TextHeight = The height, in pixels, of the text element.
-        TextWidth = The width, in pixels, of the text element.
+        TextHeight = The height, in characters (use the character 'M' for reference), of the text element.
+        TextWidth = The width, in characters (use the character 'M' for reference), of the text element.
+    
+    **ListBox Specific Parameters:**
+        ListBox Width =  The width, in charatcers (use the character 'M' for reference), the the ListBox will have.
+        ListBoxHeight = The height, in charatcers (use the character 'M' for reference), that the Listbox will have.
+        ListBoxExportselection = Wether the elements in which were previously selected will remain selected when tabbing out of the window of the ListBox.
+        ListBoxSelectMode = The mode in which the text contents of the listbox will be selected (The name is usually self-explanatory).
 
     **SpinBox Specific Parameters:**
         SpinboxFrom = The minimum value that the SpinBox can have.
-        SpinboxTo = The maximum value that the spinbox can have.
+        SpinboxTo = The maximum value that the SpinBox can have.
     
     **Scale Specific Parameters:**
         ScaleLength = The length of the scale in pixels. (Width, X value.)
@@ -504,6 +561,8 @@ def CreateMiscInputs(ForWindow, InputType:_InputTypeChoices, Border=2, CustomFon
             (For example, a ScaleRepeatDelay of 0.5 would show numbers every 0.5.)
         ScaleResolution = The rounding that the scale will have upon selecting a value, where it snaps your cursor to said value.
             (For example, setting to 1 snaps your selector to every integer, skipping decimals. Setting to -1 disables rounding.)
+        ScaleFrom = The minimum value that the Scale can have.
+        ScaleTo = The maximum value that the Scale can have.
     
     # Packing Types and their parameters:
 
@@ -524,6 +583,8 @@ def CreateMiscInputs(ForWindow, InputType:_InputTypeChoices, Border=2, CustomFon
         Y = The absolute position of the element in your window, cannot be moved. (Height)
         RelX = The relative position of the element in your window, can be moved. (Width)
         RelY = The relative position of the element in your window, can be moved. (Height)
+        RelWidth = The relative width that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Width)
+        RelHeight = The relative height that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Height)
     """
     
     if not ForWindow or not InputType:
@@ -539,8 +600,29 @@ def CreateMiscInputs(ForWindow, InputType:_InputTypeChoices, Border=2, CustomFon
             NewInput = tk.Spinbox(ForWindow, bg=BgColor, fg=FgColor, bd=Border, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), from_=SpinboxFrom, to=SpinboxTo)
 
         elif InputType == "scale":
-            NewInput = NewInput = tk.Scale(ForWindow, bg=BgColor, fg=FgColor, bd=Border, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), repeatdelay=ScaleRepeatDelay, resolution=ScaleResolution, length=ScaleLength)
-    
+            NewInput = tk.Scale(ForWindow, bg=BgColor, fg=FgColor, bd=Border, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), from_=ScaleFrom, to=ScaleTo, repeatdelay=ScaleRepeatDelay, resolution=ScaleResolution, length=ScaleLength)
+
+        elif InputType == "listbox":
+            TempChosenSelect = tk.SINGLE
+            
+            match ListBoxSelectmode:
+                case "BROWSE":
+                    TempChosenSelect = tk.BROWSE
+            
+                case "EXTENDED":
+                    TempChosenSelect = tk.EXTENDED
+            
+                case "MULTIPLE":
+                    TempChosenSelect = tk.MULTIPLE
+            
+                case "SINGLE":
+                    TempChosenSelect = tk.SINGLE
+                
+                case _:
+                    TempChosenSelect = tk.SINGLE
+                    
+            NewInput = tk.Listbox(ForWindow, width=ListBoxWidth, height=ListBoxHeight, selectmode=TempChosenSelect, exportselection=ListBoxExportselection, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), bg=BgColor, fg=FgColor, borderwidth=Border)
+
     if CommandKeybind is not None and CommandFunction is not None:
         #this is for a single key
         if len(CommandKeybind) == 1:
@@ -571,29 +653,47 @@ def CreateMiscInputs(ForWindow, InputType:_InputTypeChoices, Border=2, CustomFon
     if PackType is not None and PackType not in ["place", "grid", "pack"]:
         raise ValueError(f"Expected a proper packing style, but got {PackType} instead. Current packing types are 'Pack', 'Grid', or 'Place'") from None
 
-    elif PackType == "pack":
-        NewInput.pack(anchor=Anchor, padx=PadX, pady=PadY, side=Side, sticky=Sticky)
-    
+    if PackType == "pack":
+        kwargs = {
+            "anchor": Anchor, "padx": PadX, "pady": PadY, 
+            "side": Side, "sticky": Sticky
+        }
+        NewInput.pack(**{k: v for k, v in kwargs.items() if v is not None})
+        
     elif PackType == "place":
-        NewInput.place(x=X, y=Y, relx=RelX, rely=RelY, anchor=Anchor)
+        kwargs = {
+            "x": X, "y": Y, "relx": RelX, "rely": RelY, 
+            "relwidth": RelWidth, "relheight": RelHeight, "anchor": Anchor
+        }
+        NewInput.place(**{k: v for k, v in kwargs.items() if v is not None})
 
     elif PackType == "grid":
-        NewInput.grid(row=Row if Row is not None else 0, column=Column if Column is not None else 0, padx=PadX, pady=PadY)
+        kwargs = {
+            "row": Row, "column": Column, "padx": PadX, "pady": PadY
+        }
+        NewInput.grid(**{k: v for k, v in kwargs.items() if v is not None})
 
     return NewInput
 #endregion
 
 #region Creating Boolean Input Widgets and Miscellaneous
-_BoolInputChoices = _literal["Checkbutton", "Radiobutton", "Listbox"]
+_BoolInputChoices = _literal["Checkbutton", "Radiobutton"]
 _CheckboxStateChoices = _literal["NORMAL", "DISABLED"]
-def CreateBoolInputs(ForWindow, WidgetType:_BoolInputChoices, Border=2, CustomText="", CustomFont="Arial", CustomFontSize=12, CustomFontExtra:_ExtraTextCustomChoices="", BgColor="#f0f0f0", FgColor="#000000", CommandKeybind=None, CommandFunction=None, CheckBoxState:_CheckboxStateChoices="NORMAL", CheckBoxOnValue=1, CheckBoxOffValue=0, PackType:_PackTypeChoices=None, PadX=None, PadY=None, Anchor:_AnchorChoices="center", Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None):
+def CreateBoolInputs(ForWindow, WidgetType:_BoolInputChoices, BoolVar=None, IntVar=None, Border=2, CustomText="", CustomFont="Arial", CustomFontSize=12, CustomFontExtra:_ExtraTextCustomChoices="", BgColor="#f0f0f0", FgColor="#000000", CommandKeybind=None, CommandFunction=None, CheckBoxState:_CheckboxStateChoices="NORMAL", CheckBoxOnValue=1, CheckBoxOffValue=0, RadioButtonValue:bool=True, PackType:_PackTypeChoices=None, PadX=None, PadY=None, Anchor:_AnchorChoices="center", Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None, RelWidth=None, RelHeight=None):
     """
     # Creates a miscellaneous input from the Bool type.
+    **Returns 2 values: first being the created element, second being the crated tk.BoolVar from the linked variable.**
 
     **Essential Parameters:**
         ForWindow = This parameter dictates what window the custom widget will be created for.
         WidgetType = This parameter dictates what custom widget will be created.
-            (Options: Checkbutton, Radiobutton, Listbox)
+            (Options: Checkbutton, Radiobutton)
+
+        **BoolVar/IntVar:**
+            The variable that will be set/changed by the specified element into a value.
+            
+            BoolVar = Use when creating a checkbutton, will set the linked variable to False/True. (Usualyl an individual variable meant to only work for a single checkbutton).
+            IntVar = Use when creating a radiobutton, will set the linked variable to a specific integer value/number. (Usually used along with more radiobuttons and one major variable).
 
     **Customization Parameters:** 
         Border = This parameter defines the border of the created widget.
@@ -612,6 +712,9 @@ def CreateBoolInputs(ForWindow, WidgetType:_BoolInputChoices, Border=2, CustomTe
         CheckBoxState = 'NORMAL' for the checkbox to function normally. 'DISABLED' for the checkbox to not work.
         CheckBoxOnValue = The value that the checkbox will return when on.
         CheckBoxOffValue = The value that the checkbox will return when off.
+
+    **RadioButton Specific Parameters:**
+        RadioButtonValue = The value that the tk.BooleanVar will be set to when 
 
     # Packing Types and their parameters:
 
@@ -632,22 +735,40 @@ def CreateBoolInputs(ForWindow, WidgetType:_BoolInputChoices, Border=2, CustomTe
         Y = The absolute position of the element in your window, cannot be moved. (Height)
         RelX = The relative position of the element in your window, can be moved. (Width)
         RelY = The relative position of the element in your window, can be moved. (Height)
+        RelWidth = The relative width that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Width)
+        RelHeight = The relative height that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Height)
     """
     
     if not ForWindow or not WidgetType:
-        raise ValueError("Could not create a bool input widget as the essential parameters were not filled. Did you try checking 'ForWindow' and 'WidgetType'?") from None
-    
+        raise ValueError("Could not create a bool input widget as the essential parameters were not filled or were filled with incorrect values. Did you try checking 'ForWindow' and 'WidgetType'?") from None
+
     else:
         WidgetType = WidgetType.lower()
-
+        
         if WidgetType == "checkbutton":
-            NewBool = tk.Checkbutton(ForWindow, bd=Border, text=CustomText, anchor=Anchor, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), bg=BgColor, fg=FgColor, state=CheckBoxState, onvalue=CheckBoxOnValue, offvalue=CheckBoxOffValue)
+            if not isinstance(BoolVar, (bool, tk.BooleanVar)):
+                raise ValueError("Could not create a variable for input widget as the given variable was not a boolean value or a tk.BooleanVar. Did you try checking the variable given in 'BoolVar'?") from None
+            else:
+                if isinstance(BoolVar, tk.BooleanVar):
+                    TempVar = BoolVar
+                
+                else:
+                    TempVar = tk.BooleanVar(value=BoolVar)
+
+            NewBool = tk.Checkbutton(ForWindow, variable=TempVar, text=CustomText, bd=Border, anchor=Anchor, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), bg=BgColor, fg=FgColor, state=CheckBoxState, onvalue=CheckBoxOnValue, offvalue=CheckBoxOffValue)
 
         elif WidgetType == "radiobutton":
-            NewBool = tk.Radiobutton(ForWindow, bd=Border, anchor=Anchor, text=CustomText, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), bg=BgColor, fg=FgColor)
+            if not isinstance(IntVar, (int, tk.IntVar)):
+                raise ValueError("Could not create a variable for input widget as the given variable was not an integer value or a tk.IntVar. Did you try checking the variable given in 'IntVar'?") from None
+            else:
+                if isinstance(IntVar, tk.IntVar):
+                    TempVar = IntVar
+                
+                else:
+                    TempVar = tk.IntVar(value=IntVar)
 
-        elif WidgetType == "listbox":
-            NewBool = tk.Listbox(ForWindow, bd=Border, text=CustomText, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), bg=BgColor, fg=FgColor)
+            NewBool = tk.Radiobutton(ForWindow, variable=TempVar, value=RadioButtonValue, borderwidth=Border, anchor=Anchor, text=CustomText, font=(CustomFont.capitalize(), CustomFontSize, CustomFontExtra.lower()), bg=BgColor, fg=FgColor)
+        
 
     if CommandKeybind is not None and CommandFunction is not None:
         #this is for a single key
@@ -679,16 +800,27 @@ def CreateBoolInputs(ForWindow, WidgetType:_BoolInputChoices, Border=2, CustomTe
     if PackType is not None and PackType not in ["place", "grid", "pack"]:
         raise ValueError(f"Expected a proper packing style, but got {PackType} instead. Current packing types are 'Pack', 'Grid', or 'Place'") from None
 
-    elif PackType == "pack":
-        NewBool.pack(anchor=Anchor, padx=PadX, pady=PadY, side=Side, sticky=Sticky)
+    if PackType == "pack":
+        kwargs = {
+            "anchor": Anchor, "padx": PadX, "pady": PadY, 
+            "side": Side, "sticky": Sticky
+        }
+        NewBool.pack(**{k: v for k, v in kwargs.items() if v is not None})
     
     elif PackType == "place":
-        NewBool.place(x=X, y=Y, relx=RelX, rely=RelY, anchor=Anchor)
-
+        kwargs = {
+            "x": X, "y": Y, "relx": RelX, "rely": RelY, 
+            "relwidth": RelWidth, "relheight": RelHeight, "anchor": Anchor
+        }
+        NewBool.place(**{k: v for k, v in kwargs.items() if v is not None})
+    
     elif PackType == "grid":
-        NewBool.grid(row=Row if Row is not None else 0, column=Column if Column is not None else 0, padx=PadX, pady=PadY)
+        kwargs = {
+            "row": Row, "column": Column, "padx": PadX, "pady": PadY
+        }
+        NewBool.grid(**{k: v for k, v in kwargs.items() if v is not None})
 
-    return NewBool
+    return NewBool, TempVar
 #endregion
 
 #region Better Bind With Additional Improved Features
@@ -861,7 +993,7 @@ def CenterWindow(TargetWindow):
 #region ahhh... tk.Canvas, where hell sets loose
 
 #region Function that Automatically Creates and Packs Canvas
-def CreateCanvas(TargetWindow, SizeX=250, SizeY=250, BgColor="#f0f0f0", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None):
+def CreateCanvas(TargetWindow, SizeX=250, SizeY=250, BgColor="#f0f0f0", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None, RelWidth=None, RelHeight=None):
     """
     # Creates a tk.Canvas element and automatically packs it.
 
@@ -894,6 +1026,8 @@ def CreateCanvas(TargetWindow, SizeX=250, SizeY=250, BgColor="#f0f0f0", PackType
         Y = The absolute position of the element in your window, cannot be moved. (Height)
         RelX = The relative position of the element in your window, can be moved. (Width)
         RelY = The relative position of the element in your window, can be moved. (Height)
+        RelWidth = The relative width that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Width)
+        RelHeight = The relative height that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Height)
     """
 
     if not isinstance(TargetWindow, (tk.Tk, tk.Toplevel)):
@@ -907,14 +1041,25 @@ def CreateCanvas(TargetWindow, SizeX=250, SizeY=250, BgColor="#f0f0f0", PackType
     if PackType is not None and PackType not in ["place", "grid", "pack"]:
         raise ValueError(f"Expected a proper packing style, but got {PackType} instead. Current packing types are 'Pack', 'Grid', or 'Place'") from None
 
-    elif PackType == "pack":
-        NewCanvas.pack(anchor=Anchor, padx=PadX, pady=PadY, side=Side, sticky=Sticky)
+    if PackType == "pack":
+        kwargs = {
+            "anchor": Anchor, "padx": PadX, "pady": PadY, 
+            "side": Side, "sticky": Sticky
+        }
+        NewCanvas.pack(**{k: v for k, v in kwargs.items() if v is not None})
     
     elif PackType == "place":
-        NewCanvas.place(x=X, y=Y, relx=RelX, rely=RelY, anchor=Anchor)
-
+        kwargs = {
+            "x": X, "y": Y, "relx": RelX, "rely": RelY, 
+            "relwidth": RelWidth, "relheight": RelHeight, "anchor": Anchor
+        }
+        NewCanvas.place(**{k: v for k, v in kwargs.items() if v is not None})
+    
     elif PackType == "grid":
-        NewCanvas.grid(row=Row, column=Column, padx=PadX, pady=PadY)
+        kwargs = {
+            "row": Row, "column": Column, "padx": PadX, "pady": PadY
+        }
+        NewCanvas.grid(**{k: v for k, v in kwargs.items() if v is not None})
 
     return NewCanvas
 #endregion
@@ -1069,6 +1214,8 @@ def CreateCanvasMisc(ForCanvas, Type:_CanvasMiscChoices, PosX, PosY, Anchor:_Anc
 ########################################
 # time to mess a bit with PIL and images
 ########################################
+#region Pillow is actually not half bad to use, pretty simple...
+
 #region (SINGLE USE) Messing with Pillow and Image Rendering
 _MirrorImageChoice = _literal["Vertical", "Horizontal"]
 def BetterPhotoImage(Image, RotateDegrees=None, RotateChangeSize:_BoolChoices=False, ResizeImageX=None, ResizeImageY=None, MirrorImage:_MirrorImageChoice=None):
@@ -1091,7 +1238,7 @@ def BetterPhotoImage(Image, RotateDegrees=None, RotateChangeSize:_BoolChoices=Fa
     #function to tell wether the image is actually valid
     def is_valid_image_pillow(imgg):
         try:
-            with img.open(imgg) as immg:
+            with _img.open(imgg) as immg:
                 immg.verify()
                 return True
         except (IOError, SyntaxError):
@@ -1100,7 +1247,7 @@ def BetterPhotoImage(Image, RotateDegrees=None, RotateChangeSize:_BoolChoices=Fa
 
     #back to the actual code
     if is_valid_image_pillow(Image):
-        NewImage = img.open(Image)
+        NewImage = _img.open(Image)
 
         if NewImage.mode != 'RGBA':
             NewImage = NewImage.convert('RGBA')
@@ -1125,15 +1272,15 @@ def BetterPhotoImage(Image, RotateDegrees=None, RotateChangeSize:_BoolChoices=Fa
             MirrorImage = MirrorImage.lower()
 
             if MirrorImage == "vertical":
-                NewImage = NewImage.transpose(img.FLIP_TOP_BOTTOM)
+                NewImage = NewImage.transpose(_img.FLIP_TOP_BOTTOM)
             
             elif MirrorImage == "horizontal":
-                NewImage = NewImage.transpose(img.FLIP_LEFT_RIGHT)
+                NewImage = NewImage.transpose(_img.FLIP_LEFT_RIGHT)
             
             else:
                 raise ValueError("Could not flip image as the given value was not 'vertical' or 'horizontal'. Did you try checking the 'MirrorImage' value?") from None
 
-        NewImage = imgtk.PhotoImage(NewImage)
+        NewImage = _imgtk.PhotoImage(NewImage)
 
         return NewImage
 
@@ -1160,7 +1307,7 @@ class BetterImage:
         # function to tell wether the image is actually valid
         def is_valid_image_pillow(imgg):
             try:
-                with img.open(imgg) as immg:
+                with _img.open(imgg) as immg:
                     immg.verify()
                     return True
             except (IOError, SyntaxError):
@@ -1169,7 +1316,7 @@ class BetterImage:
 
         # back to the actual code
         if is_valid_image_pillow(FilePath):
-            self.NewImg = img.open(FilePath)
+            self.NewImg = _img.open(FilePath)
             self.converted = False
             self.filepath = FilePath
 
@@ -1196,17 +1343,17 @@ class BetterImage:
                 MirrorImage = MirrorImage.lower()
 
                 if MirrorImage == "vertical":
-                    self.NewImg = self.NewImg.transpose(img.FLIP_TOP_BOTTOM)
+                    self.NewImg = self.NewImg.transpose(_img.FLIP_TOP_BOTTOM)
                 
                 elif MirrorImage == "horizontal":
-                    self.NewImg = self.NewImg.transpose(img.FLIP_LEFT_RIGHT)
+                    self.NewImg = self.NewImg.transpose(_img.FLIP_LEFT_RIGHT)
                 
                 else:
                     raise ValueError("Could not flip image as the given value was not 'vertical' or 'horizontal'. Did you try checking the 'MirrorImage' value?") from None
             
             if ConvertPhotoImage and not isinstance(self.NewImg, tk.PhotoImage):
                 self.converted = True
-                self.NewImg = imgtk.PhotoImage(self.NewImg)
+                self.NewImg = _imgtk.PhotoImage(self.NewImg)
             
             elif ConvertPhotoImage and isinstance(self.NewImg, tk.PhotoImage):
                 _warn.warn(f"Did not convert {self.NewImg} to PhotoImage as {self.NewImg} is already a tk.PhotoImage object.")
@@ -1214,7 +1361,12 @@ class BetterImage:
             raise ValueError("Could not create a ImageTk image as the file given was not a proper image file/format. Did you try checking the 'Image' parameter given?") from None
 
     def __repr__(self):
-        return f"<BetterImage: File Path: {self.filepath}, Size: {self.NewImg.size if not isinstance(self.NewImg, tk.PhotoImage) else f"{self.NewImg.width()}, {self.NewImg.height()}"}>"
+        if isinstance(self.NewImg, BetterImage):
+            imgsize = self.NewImg.size
+        else:
+            imgsize = (self.NewImg.width(), self.NewImg.height())
+
+        return f"<BetterImage: File Path: {self.filepath}, Size: {imgsize}>"
 
     # now to edit the created EkImage class
     def Configure(self, RotateDegrees=None, RotateChangeSize:_BoolChoices=False, ResizeImageX=None, ResizeImageY=None, MirrorImage:_MirrorImageChoice=None, ConvertPhotoImage:_BoolChoices=False):
@@ -1257,16 +1409,16 @@ class BetterImage:
             MirrorImage = MirrorImage.lower()
 
             if MirrorImage == "vertical":
-                self.NewImg = self.NewImg.transpose(img.FLIP_TOP_BOTTOM)
+                self.NewImg = self.NewImg.transpose(_img.FLIP_TOP_BOTTOM)
             
             elif MirrorImage == "horizontal":
-                self.NewImg = self.NewImg.transpose(img.FLIP_LEFT_RIGHT)
+                self.NewImg = self.NewImg.transpose(_img.FLIP_LEFT_RIGHT)
             
             else:
                 raise ValueError("Could not flip image as the given value was not 'vertical' or 'horizontal'. Did you try checking the 'MirrorImage' value?") from None
 
         if ConvertPhotoImage and not isinstance(self.NewImg, tk.PhotoImage):
-                self.NewImg = imgtk.PhotoImage(self.NewImg)
+                self.NewImg = _imgtk.PhotoImage(self.NewImg)
             
         elif ConvertPhotoImage and isinstance(self.NewImg, tk.PhotoImage):
             _warn.warn(f"Did not convert {self.NewImg} to PhotoImage as {self.NewImg} is already a tk.PhotoImage object.")
@@ -1278,7 +1430,7 @@ class BetterImage:
         """
 
         if not isinstance(self.NewImg, tk.PhotoImage):
-                self.NewImg = imgtk.PhotoImage(self.NewImg)
+                self.NewImg = _imgtk.PhotoImage(self.NewImg)
                 self.converted = True
 
         elif isinstance(self.NewImg, tk.PhotoImage):
@@ -1287,10 +1439,14 @@ class BetterImage:
     Config = Configure
 #endregion
 
+#endregion
+
 
 ##########################################################
 # time to work with sounds and pygame (yuck tkinter rival)
 ##########################################################
+#region will i forever regret this? perhaps... maybe?
+
 #region Class to Create the Main Mixer
 class _EasyMixer:
     def __init__(self):
@@ -1485,7 +1641,7 @@ class BetterAudio:
 
     def PlayAudio(self):
         """
-        # Plays the BetterAudio object with it's configurations.
+        # Plays the BetterAudio object with its configurations.
         """
         if self.method == "Play":
             self.NewAudio.play(loops=self.loops, fade_ms=self.fadein)
@@ -1506,7 +1662,7 @@ class BetterAudio:
 
     def StopAudio(self):
         """
-        # Stops the BetterAudio object with it's confiurations.
+        # Stops the BetterAudio object with its confiurations.
         """
 
         if self.fadeout != 0:
@@ -1577,10 +1733,342 @@ def StreamAudio(FilePath, StartFrom=0, Loops=0, FadeIn=0, IgnoreMP3Warning:_Bool
     return BetterAudio(FilePath, "Stream", FadeIn, Loops=Loops, StartFrom=StartFrom)
 #endregion
 
+#endregion
+
+
+##########################################################
+# time to work with video too since we did audio AND image
+##########################################################
+#region this was such a damn headache to make
+
+#region BetterVideo Class to Load and Play Videos
+
+# Holy shit there's SO MANY OF THEM.
+_Hwcodec_settings = _literal[
+    "no",
+    "auto",
+    "auto-safe",
+    "yes",
+    "auto-unsafe",
+    "auto-copy",
+    "auto-copy-safe",
+    "auto-copy-unsafe",
+    "d3d11va",
+    "dxva2",
+    "nvdec",
+    "cuda",
+    "vdpau",
+    "vaapi",
+    "videotoolbox",
+    "d3d11va-copy",
+    "dxva2-copy",
+    "nvdec-copy",
+    "vaapi-copy",
+    "videotoolbox-copy",
+]
+
+class BetterVideo:
+    def __init__(self, ForWindow, VideoSource, PlayVideo:_BoolChoices=False, KeepAspectRatio:_BoolChoices=True, ZoomToFill:_BoolChoices=False, WaitForEnd=False, FrameWidth=None, FrameHeight=None, HardwareAcceleration:_Hwcodec_settings="auto", PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None, RelWidth=None, RelHeight=None):
+        """
+        # Creates a BetterVideo object that can load videos into the GPU and play them inside a window.
+
+        **Necessary parameters:**
+            ForWindow = The parent window in which the video frame will be placed in.
+            VideoSource = The source for the played video. Can be a link or a file directory.
+        
+        **Video Parameters:**
+            PlayVideo = Wether the video will instatly play upon creation.
+            WaitForEnd = When active, the script only proceeds when the video is over.
+            KeepAspectRatio = Wether the video will keep its aspect ratio upon resizing.
+            ZoomToFill = Wether the video will zoom to fit requirements upon resizing.
+            HardwareAcceleration = Configures the specific Hardware Acceleration that will be used for rendering the video.
+                *(For much better detail, scroll down and see: 'All of the Hardware Acceleration configurations')*
+            
+        **Geometry parameters:**
+            FrameWidth = The width of the frame, in videos, the video will be contained in.
+            FrameHeight = The height of the frame, in videos, the video will be contained in.
+
+        # Packing Types and their parameters:
+
+        **Pack (The default type, packs label and contains borders.):**
+            PadX = Width for the padding of the label.
+            PadY = Height for the padding of the label.
+            Side = Side where the label will go to in the widget, is relative.
+            Sticky = Position where the label will stick to in the widget, is not relative.
+        
+        **Grid (for mounting grids and organized sheets):**
+            Row = The row where your element will be placed. (Horizontal)
+            Column = the column where your element will be placed. (Vertical)
+            PadX = the padding width your element will have, affects elements in and outside of the grid.
+            PadY = the padding height your element will have, affects elements in and outside of the grid.
+        
+        **Place (for accurately placing elements in absolute or relative positions):**
+            X = The absolute position of the element in your window, cannot be moved. (Width)
+            Y = The absolute position of the element in your window, cannot be moved. (Height)
+            RelX = The relative position of the element in your window, can be moved. (Width)
+            RelY = The relative position of the element in your window, can be moved. (Height)
+
+        # All of the Hardware Acceleration configurations:
+            ***General settings and non-specific decoders:***
+                no,  **Disable hardware decoding (software only - best for transparency).**
+                auto,  **Enable any whitelisted safe hardware decoder.**
+                auto-safe,  **Alias for auto.**
+                yes,  **Alias for auto.**
+                auto-unsafe,  **Forcibly enable any decoder, bypassing safety whitelists.**
+                auto-copy,  **Use auto, but restrict to copy-back modes.**
+                auto-copy-safe,
+                auto-copy-unsafe,
+            
+            ***Platform-specific native decoders:***
+                d3d11va,  **Windows (DirectX 11, recommended for Windows).**
+                dxva2,  **Windows (Older hardware fallback).**
+                nvdec,  **NVIDIA (Recommended for Nvidia GPUs across platforms).**
+                cuda,  **NVIDIA (Legacy CUDA decoding).**
+                vdpau,  **Linux (NVIDIA legacy).**
+                vaapi,  **Linux (Intel / AMD).**
+                videotoolbox,  **macOS / iOS (Native Apple hardware decoding).**
+            
+            ***Copy-back variants (decode on hardware, copy frame back to system RAM):***
+                d3d11va-copy,
+                dxva2-copy,
+                nvdec-copy,
+                vaapi-copy,
+                videotoolbox-copy,
+        """
+        
+        self.frame = tk.Frame(ForWindow, bg="blue")
+
+        self.source = VideoSource
+        self.vol = 100
+        self.spd = 1.0
+        self.muted = False
+        self.looped = "no"
+        self.contrast = 0
+        self.saturation = 0
+        self.overridensize = False
+        self.defaultwidth = 640
+        self.defaultheight = 360
+        self.setwidth = FrameHeight
+        self.setheight = FrameWidth
+        self.zoomtofill = 1.0 if ZoomToFill else 0.0
+
+        if FrameWidth is not None or FrameHeight is not None:
+            self.overridensize = True
+            self.frame.config(width=FrameWidth if FrameWidth is not None else self.defaultwidth, height=FrameHeight if FrameHeight is not None else self.defaultheight)
+        else:
+            self.overridensize = False
+            self.frame.config(width=self.defaultwidth, height=self.defaultheight)
+        
+        if PackType is not None:
+            PackType = PackType.lower()
+
+        if PackType is not None and PackType not in ["place", "grid", "pack"]:
+            raise ValueError(f"Expected a proper packing style, but got {PackType} instead. Current packing types are 'Pack', 'Grid', or 'Place'") from None
+
+        if PackType == "pack":
+            kwargs = {
+                "anchor": Anchor, "padx": PadX, "pady": PadY, 
+                "side": Side, "sticky": Sticky
+            }
+            self.frame.pack(**{k: v for k, v in kwargs.items() if v is not None})
+        
+        elif PackType == "place":
+            kwargs = {
+                "x": X, "y": Y, "relx": RelX, "rely": RelY, 
+                "relwidth": RelWidth, "relheight": RelHeight, "anchor": Anchor
+            }
+            self.frame.place(**{k: v for k, v in kwargs.items() if v is not None})
+        
+        elif PackType == "grid":
+            kwargs = {
+                "row": Row, "column": Column, "padx": PadX, "pady": PadY
+            }
+            self.frame.grid(**{k: v for k, v in kwargs.items() if v is not None})
+        
+
+        self.frame.update()
+        
+        self.player = _mpv.MPV(
+            wid=str(self.frame.winfo_id()),
+            vo="gpu",
+            hwdec=HardwareAcceleration,
+            background="none",
+            force_window=True,
+            keepaspect=KeepAspectRatio,
+            autofit="100%x100%",
+            panscan=self.zoomtofill,
+        )
+
+        if PlayVideo:
+            if _os.path.exists(self.source):
+                self.Play()
+            else:
+                raise FileNotFoundError(f"Could not load/play video as {self.source} could not be found. Did you try checking the 'VideoSource'?")
+            if WaitForEnd:
+                self.player.wait_for_playback()
+
+    def __repr__(self):
+        return f"<BetterVideo: 'Video Length: '{self.player.duration}' File Path: '{self.source}'>"
+
+    def Configure(self, Volume=100, Speed=1.0, Muted=False, FrameWidth=None, FrameHeight=None, Looped:_literal["inf", "no"]="no", Contrast=0, Saturation=0):
+        """
+        # Configures the BetterVideo element with all availiable options.
+
+        **Geometry parameters:**
+            FrameWidth = The width of the frame, in videos, the video will be contained in.
+            FrameHeight = The height of the frame, in videos, the video will be contained in.
+
+        **Configuration parameters:**
+            Volume = The audio volume of the video. (from 0.0 to 130.0)
+            Speed = The playback speed of the video. (from 0.1 to 2.0)
+            Muted = Wether the video is muted. (Setting volume won't work.)
+            Looped =  Wether the video will play once or loop indefinitely. ('inf' or 'no')
+            Contrast = Alter the contrast of the video. (from -100 to 100)
+            Saturation = Alter the Saturation of the video.
+        """
+        
+        self.player.volume = Volume
+        self.player.speed = Speed
+        self.player.mute = Muted
+        self.player.loop_file = Looped
+        self.player.contrast = Contrast
+        self.player.saturation = Saturation
+
+        if FrameWidth is not None or FrameHeight is not None:
+            self.setwidth = FrameWidth
+            self.setheight = FrameHeight
+            self.overridensize = True
+            self.frame.config(width=FrameWidth if FrameWidth is not None else self.defaultwidth, height=FrameHeight if FrameHeight is not None else self.defaultheight)
+
+        self.frame.update()
+
+    def TogglePause(self):
+        """
+        # Pauses or unpauses (resumes) the BetterVideo object.
+        """
+        self.player.pause = not self.player.pause
+
+    def SeekTo(self, Seconds):
+        """
+        # Changes the current BetterObject video timestamp to the timestamp, in seconds, given.
+        """
+        self.player.seek(Seconds, reference="absolute")
+
+    def Skip(self, Seconds, Direction:_literal["Forwards", "fwd", "Backwards", "bwd"]=None):
+        """
+        # Skips or returns a specific set timestamp within the BetterVideo object.
+            **You can use negative numbers for backwards, or positive for forwards.**
+
+            **Alternatively, you can use 'Direction' to dictate where the timestamp will skip.**
+        """
+        Seconds = round(Seconds, 1)
+
+        if Direction is None:
+            self.player.seek(Seconds, reference="relative")
+        
+        elif Direction in ["Forwards", "fwd"]:
+            UsedSeconds = abs(Seconds)
+            self.player.seek(UsedSeconds, reference="relative")
+        
+        elif Direction in ["Backwards", "bwd"]:
+            EVILseconds = -abs(Seconds)
+            self.player.seek(EVILseconds, reference="relative")
+
+    def Play(self, WaitForEnd=False):
+        """
+        # Play the BetterVideo object.
+        """
+        self.frame.update()
+
+        self.player.play(self.source)
+
+        try:
+            self.player.wait_for_property("width", timeout=2) 
+            
+            native_w = self.player.width
+            native_h = self.player.height
+
+            if native_w and native_h and not self.overridensize:
+                self.frame.config(width=native_w, height=native_h)
+                self.frame.pack_propagate(False) 
+            
+            else:
+                self.frame.config(width=self.setwidth, height=self.setheight)
+        
+        except(TimeoutError, Exception):
+            self.frame.config(width=self.setwidth, height=self.setheight)
+
+        self.frame.configure(bg="blue")
+
+        if WaitForEnd:
+            self.player.wait_for_playback()
+
+    def Stop(self):
+        """
+        # Stop the BetterVideo object entirely.
+        """
+        self.Stop()
+    
+    def Destroy(self):
+        """
+        # Destroy the BetterVideo object entirely and stop playback immediately.
+        """
+        self.player.terminate()
+        self = None
+#endregion
+
+#region Function to Quickly Create And Return Video
+def CreateVideo(ForWindow, VideoSource, PlayVideo:_BoolChoices=False, KeepAspectRatio:_BoolChoices=True, ZoomToFill:_BoolChoices=False, WaitForEnd=False, FrameWidth=None, FrameHeight=None, PackType:_PackTypeChoices=None, Anchor:_AnchorChoices="center", PadX=0, PadY=0, Side=tk.TOP, Row=0, Column=0, Sticky=None, X=None, Y=None, RelX=None, RelY=None):
+    """
+    # Creates a BetterVideo object that can load videos into the GPU and play them inside a window.
+
+    **Necessary parameters:**
+        ForWindow = The parent window in which the video frame will be placed in.
+        VideoSource = The source for the played video. Can be a link or a file directory.
+    
+    **Video Parameters:*
+        PlayVideo = Wether the video will instatly play upon creation.
+        WaitForEnd = When active, the script only proceeds when the video is over.
+        KeepAspectRatio = Wether the video will keep its aspect ratio upon resizing.
+        ZoomToFill = Wether the video will zoom to fit requirements upon resizing.
+        
+    **Geometry parameters:**
+        FrameWidth = The width of the frame, in videos, the video will be contained in.
+        FrameHeight = The height of the frame, in videos, the video will be contained in.
+
+    # Packing Types and their parameters:
+
+    **Pack (The default type, packs label and contains borders.):**
+        PadX = Width for the padding of the label.
+        PadY = Height for the padding of the label.
+        Side = Side where the label will go to in the widget, is relative.
+        Sticky = Position where the label will stick to in the widget, is not relative.
+    
+    **Grid (for mounting grids and organized sheets):**
+        Row = The row where your element will be placed. (Horizontal)
+        Column = the column where your element will be placed. (Vertical)
+        PadX = the padding width your element will have, affects elements in and outside of the grid.
+        PadY = the padding height your element will have, affects elements in and outside of the grid.
+    
+    **Place (for accurately placing elements in absolute or relative positions):**
+        X = The absolute position of the element in your window, cannot be moved. (Width)
+        Y = The absolute position of the element in your window, cannot be moved. (Height)
+        RelX = The relative position of the element in your window, can be moved. (Width)
+        RelY = The relative position of the element in your window, can be moved. (Height)
+        RelWidth = The relative width that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Width)
+        RelHeight = The relative height that your widget will have compared to your window. 0.1 being 10%, 0.9 being 90%, etc. (Height)
+    """
+    NewVideo = BetterVideo(ForWindow, VideoSource, PlayVideo, KeepAspectRatio, ZoomToFill, WaitForEnd, FrameWidth, FrameHeight, PackType, Anchor, PadX, PadY, Side, Row, Column, Sticky, X, Y, RelX, RelY)
+    return NewVideo
+#endregion
+
+#endregion
+
 
 #############################################
 # time to do some extra stuff that's cool too
 #############################################
+#region this is the miscellanous stuff that 100% is needed.
 #region Changing Color Theme and Scheme Function
 _ColorSchemeChoices = _literal["Nordic", "Moonlight", "Snow", "Slate", "Midnight", "Sandstone", "ModernLight", "Forest"]
 def AddColorThemes(TargetElement, ColorTheme:_ColorSchemeChoices):
@@ -1654,10 +2142,10 @@ def AddColorThemes(TargetElement, ColorTheme:_ColorSchemeChoices):
 
     availiableTargets = [tk.Tk, tk.Toplevel, tk.Frame, tk.LabelFrame, tk.Button, tk.Entry, tk.Text, tk.Checkbutton, tk.Radiobutton, tk.Scale, tk.Label, tk.Listbox, tk.Canvas, tk.Scrollbar, tk.Message]
 
-    WindowElements = [tk.Tk, tk.Toplevel, tk.Frame, tk.LabelFrame]
+    WindowElements = [tk.Tk, tk.Toplevel, tk.Canvas, tk.Frame, tk.LabelFrame]
     TextElements = [tk.Entry, tk.Text]
     ActionElements = [tk.Button, tk.Checkbutton, tk.Radiobutton, tk.Scale]
-    DisplayElements = [tk.Label, tk.Listbox, tk.Canvas, tk.Scrollbar, tk.Message]
+    DisplayElements = [tk.Label, tk.Listbox, tk.Scrollbar, tk.Message]
 
     availiableSchemes = ["Slate", "Midnight", "Sandstone", "Modernlight", "Forest", "Nordic", "Snow", "Moonlight"]
 
@@ -1693,6 +2181,67 @@ def AddColorThemes(TargetElement, ColorTheme:_ColorSchemeChoices):
             raise TypeError(f"Could not apply a custom color scheme as {TargetElement} was not an availiable element. Did you try checking the 'TargetElement' parameter?") from None
 #endregion
 
+#region Reviving "-transparentcolor" With Better Functionality
+def BetterChromaKey(TargetWindow, HexColors):
+    """
+    # Utilizes the same (Though now improved) '-transparentcolor' method on a window.
+    ###  Warning: This function will apply .overrideredirect(True) on the chosen window. Use with Caution!
+
+    **Necessary Parameters:**
+        TargetWindow = The window that will be affected. Must be a valid window (tk.Toplevel, tk.Tk) and cannot be any other element.
+        
+        HexColors = The color(s) that will be checked for in the window and applied transparency in. 
+            *(For more detail, scroll down and see: Transparent Color Quick Guide)*
+
+    # Transparent Color Quick Guide:
+    **Essential: The color must be in its HEX value, and can NOT be any of the following:**
+        *RGB, RGBA, HSL, HSLA, CMYK.*
+
+    *It is highly recommended to use this color picker (made by W3Schools) to convert your wanted color to HEX value:*
+    *https://www.w3schools.com/colors/colors_picker.asp*
+
+    **There can also be multiple colors at once, given the accepted types are:**
+        * String/str (For single colors): '#ffffff'
+        * Tuples/tuple (For multiple colors): ('#ffffff', '#000000')
+        * Lists/list (Multiple colors): ['#ffffff', '#000000']
+        * Dictionaries/dict (Multiple colors): {'color1': '#ffffff', 'color2': '#000000'}
+    """
+
+    if not isinstance(TargetWindow, (tk.Tk, tk.Toplevel)) or not TargetWindow:
+        raise TypeError("Could not apply transparent coloring because the element given was not a Toplevel or Root window. Did you try checking if TargetWindow is a tk.Tk or tk.Toplevel object?") from None
+
+    if not isinstance(HexColors, (str, list, tuple, dict)) or not HexColors:
+        raise TypeError("Could not apply transparent coloring because the element given was not a valid value. Did you try checking if HexColors is a string (str) or multiple strings (list, tuple, dict)?") from None
+    
+    MultipleColorChromaKey = []
+    if isinstance(HexColors, (list, tuple)):
+        MultipleColorChromaKey.extend(HexColors)
+    elif isinstance(HexColors, dict):
+        MultipleColorChromaKey.extend(HexColors.values())
+    else:
+        MultipleColorChromaKey.append(HexColors)
+
+    for color in MultipleColorChromaKey:
+        if not color.startswith("#"):
+            raise TypeError("Could not apply transparent coloring because one of the colors is not a valix hex color value (e.g. #000000, #ffffff). Did you try checking HexColors for any invalid string?") from None
+
+
+    TargetWindow.overrideredirect(True)
+
+    TargetWindow.wait_visibility(TargetWindow)
+    hwnd = TargetWindow.winfo_id()
+    ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+    ctypes.windll.user32.SetWindowLongW(hwnd, -20, ex_style | 0x80000)
+
+    for Color in MultipleColorChromaKey:
+        RGB = TargetWindow.winfo_rgb(Color)
+        colorref = (RGB[0] >> 8) | ((RGB[1] >> 8) << 8) | ((RGB[2] >> 8) << 16)
+        
+        ctypes.windll.user32.SetLayeredWindowAttributes(hwnd, colorref, 0, 0x00000001)
+
+    ctypes.windll.user32.RedrawWindow(hwnd, None, None, 0x0100 | 0x0001 | 0x0002 | 0x0004)
+#endregion
+
 #region Adding Helper Function to List all Funcs
 def Help():
     """
@@ -1704,26 +2253,26 @@ def Help():
 {"-="*40}
 Objects, Classes and Class Specific Functions:
 {"-"*5}
-BetterImage (CLASS)-> Create a BetterImage object with full support to Tkinter's PhotoImage.
-BetterPhotoImage   -> Render an image and return a tk.PhotoImage object.
+BetterImage (CLASS) -> Create a BetterImage object with full support to Tkinter's PhotoImage.
+BetterPhotoImage    -> Render an image and return a tk.PhotoImage object.
 {"-"*5}
-ek.EasyMixer (OBJ) -> Necessary mixer to initiate for mixer settings and audio playback.)
-BetterAudio (CLASS)-> Create a BetterAudio object which allow for easy audio control and playback.
-PlayAudio          -> Create and return a BetterAudio object and automatically play it.
-StreamAudio        -> Create and return a BetterAudio object and automatically stream it.
+ek.EasyMixer (OBJ)  -> Necessary mixer to initiate for mixer settings and audio playback.)
+BetterAudio (CLASS) -> Create a BetterAudio object which allow for easy audio control and playback.
+PlayAudio           -> Create and return a BetterAudio object and automatically play it.
+StreamAudio         -> Create and return a BetterAudio object and automatically stream it.
+{"-" * 5}
+BetterVideo (CLASS) -> Create a BetterVideo object that automatically handles full video playback.
+CreateVideo         -> Runs the BetterVideo class to create and return a BetterVideo object.
 {"-="*40}
 Tkinter (tk) Specific Functions:
 {"-"*5}
 CreateRoot       -> Create and return a fully created tk.Tk window.
 CreateToplevel   -> Create and return a fully created tk.Toplevel window.
-BetterConfigure  -> Customize a window (tk.Tk or tk.Toplevel) with added features.
 CreateLabel      -> Create, return and pack a fully customizeable tk.Label.
 CreateEntry      -> Create, return and pack a fully customizeable tk.Entry.
 CreateButton     -> Create, return and pack a fully customizeable tk.Button
 CreateMiscInputs -> Create, return and pack one of three miscellaneous inputs. (Text, Spinbox, Scale)
 CreateBoolInputs -> Create, return and pack one of three miscellaneous bool inputs. (Checkbutton, Radiobutton, Listbox)
-BetterBind       -> A better, and improved .bind() function from Tkinter with added features.
-BetterGeometry   -> A better, and improved .geometry() function from Tkinter with added features.
 CenterWindow     -> A function to automatically and dynamically center a window in the screen.
 {"-="*40}
 Canvas (tk.Canvas) Specific Funtions:
@@ -1733,9 +2282,15 @@ CreateCanvasShapes -> Automatically create a shape (Square, Rectangle, Circle, O
 CreateCanvasMisc   -> Automatically create a miscellaneous widget (Image, Text, Window) in the tk.Canvas.
 {"-="*40}
 Miscellaneous Functions:
-AddColorThemes -> Configure any widget given (Handles: List, Tuple, or Dict) to apply one of 8 color themes.
-Help           -> Prints this menu message in the console.
+AddColorThemes  -> Configure any widget given (Handles: List, Tuple, or Dict) to apply one of 8 color themes.
+BetterCromaKey  -> Bring back Tkinter's '-transparentcolor', but now working much more often and slightly better.
+BetterBind      -> A better, and improved .bind() function from Tkinter with added features.
+BetterGeometry  -> A better, and improved .geometry() function from Tkinter with added features.
+BetterConfigure -> Customize a window (tk.Tk or tk.Toplevel) with added features.
+Help            -> Prints this menu message in the console.
 """
     print(__menu_)
+
+#endregion
 
 #endregion
