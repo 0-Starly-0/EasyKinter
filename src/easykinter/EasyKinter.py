@@ -37,12 +37,14 @@ __all__ = [
     "StreamAudio",
     "BetterPhotoImage",
     "BetterImage",
+    "BetterGIF",
+    "CreateBetterGIF",
     "BetterVideo",
     "CreateVideo"
 ]
 
 # also this for my sake:
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 ############################################
 # tkinter (yay), this is where it all started
@@ -89,7 +91,7 @@ def CreateRoot(Title="Root Tkinter Window", SizeX=250, SizeY=250, PosX=None, Pos
         PosY = Position in your screen where the window is created, cannot be higher than the size of your monitor. (Height)
 
     **Extra**:
-        HideWindow = Tells the program if your window will be hidden upon creation.
+        HideWindow = Tells the progr    am if your window will be hidden upon creation.
     """
     
     if tk._default_root is not None:
@@ -1781,6 +1783,7 @@ class BetterVideo:
             WaitForEnd = When active, the script only proceeds when the video is over.
             KeepAspectRatio = Wether the video will keep its aspect ratio upon resizing.
             ZoomToFill = Wether the video will zoom to fit requirements upon resizing.
+
             HardwareAcceleration = Configures the specific Hardware Acceleration that will be used for rendering the video.
                 *(For much better detail, scroll down and see: 'All of the Hardware Acceleration configurations')*
             
@@ -1836,7 +1839,7 @@ class BetterVideo:
                 videotoolbox-copy,
         """
         
-        self.frame = tk.Frame(ForWindow, bg="blue")
+        self.frame = tk.Frame(ForWindow, bg="gray")
 
         self.source = VideoSource
         self.vol = 100
@@ -2065,6 +2068,202 @@ def CreateVideo(ForWindow, VideoSource, PlayVideo:_BoolChoices=False, KeepAspect
 #endregion
 
 
+###############################################################
+# I haven't yet decided where to place this, so fuck it we ball
+###############################################################
+#region I genuinely have no idea if i put this on 'working with video' or not
+
+#region Creating Gif Animation
+class BetterGIF():
+    def __init__(self, FilePath:str, TargetLabel, Playing:bool=True, LoopGif:bool=False, Speed:int=1, OnCompletion:function=None):
+        """
+        # Creates a BetterGIF element which can be used to animate a .gif file in a Label.
+
+        **Necessary Parameters:**
+            FilePath = The path to the .gif file in which will be played.
+            TargetLabel = The tkinter label (tk.Label) in which the gif will be displayed on.
+
+        **Additional Parameters:**
+            Playing = Wether the gif will be playing upon Creation/Loading (Boolean)
+            LoopGif = Wether the animation will be looped upon finishing. (Boolean)
+            Speed = The speed at which the animationw will be played. 2 would be 2 times speed. (Float)
+            OnCompletion = Any function that will be executed exactly after completing the animation. (Function)
+
+        **Note: LoopGif and OnCompletion conflict with eachother, as the function cannot be played if the animation never ends.**
+
+        **If both are present in any occasion, OnCompletion will take the priority and override LoopGif to false.**
+        """
+
+        
+        def _CheckGif(FilePath):
+                    if not FilePath.lower().endswith(".gif"):
+                        return False
+                    
+                    try:
+                        with open(FilePath, "rb") as f:
+                            header = f.read(4)
+                            if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
+                                return True
+                    except Exception:
+                        pass
+                    return False
+
+        if not _CheckGif():
+            raise ValueError("Could not load the animated gif as the file path given was not a valid '.gif' file. Did you try checking FilePath?") from None
+        
+        self._GifImage = _img.open(FilePath)
+        self._label = TargetLabel
+        self._playing = Playing
+        self._looping = LoopGif
+        self._speed = Speed
+        self._completed = None
+        self._after_id = None
+
+        self._label.bind("<Destroy>", lambda e: self.Stop())
+
+        if OnCompletion is not None:
+            if not isinstance(OnCompletion, function):
+                raise TypeError("Could not load function for after finishing the animation as the parameter given was not a proper function. Did you try checking OnCompletion?")
+            
+            self._completed = OnCompletion
+
+            if self._looping:
+                self._looping = False
+                _warn.warn("Looping was overriden to False, as the function could not be executed upon completing the animation otherwise.")
+
+        self._frames = []
+        self._duration = []
+
+        try:
+            while True:
+                self._frames.append(self._GifImage.copy().convert("RGBA"))
+                duration = self._GifImage.info.get("duration", 100)
+                self._duration.append(duration if duration > 0 else 100)
+                self._GifImage.seek(len(self._frames))
+
+        except EOFError:
+            pass
+
+        self._TotalFrames = len(self._frames)
+        self._CurrentFrameIndex = 0
+        self._CurrentPic = _imgtk.PhotoImage(self._frames[0])
+
+
+        if self._playing:
+            self.Play()
+
+
+    def Configure(self, Playing:bool=True, LoopGif:bool=False, Speed:float=1, OnCompletion:function=None):
+        """
+        # Configures the BetterGIF element to change any value.
+        **Warning: Highly unrecommended to execute this function when an animation is playing.**
+
+        **Instead, a better execution would be to briefly pause the animation, configure it, then play again.**
+
+        **Additional Parameters:**
+                Playing = Wether the gif will be playing upon Creation/Loading (Boolean)
+                LoopGif = Wether the animation will be looped upon finishing. (Boolean)
+                Speed = The speed at which the animationw will be played. 2 would be 2 times speed. (Float)
+                OnCompletion = Any function that will be executed exactly after completing the animation. (Function)
+    
+        **Note: LoopGif and OnCompletion conflict with eachother, as the function cannot be played if the animation never ends.**
+    
+        **If both are present in any occasion, OnCompletion will take the priority and override LoopGif to false.**
+        """
+
+        self._playing = Playing
+        self._looping = LoopGif
+        self._speed = Speed
+        self._completed = OnCompletion
+
+
+    def Play(self):
+        """
+        # Play the BetterGIF animation.
+        """
+
+        self._playing = True
+        
+        if self._looping:
+            self._AnimateLooped()
+        else:
+            self._AnimateOnce()
+
+    def Stop(self):
+        """
+        # Stop the BetterGIF animation.
+        
+        *Note: Stopping is different from pausing. For a different result, use Pause().*
+
+        *Stop: End the current animation and reset to the first frame. | Pause: End the animation, but stay in the same frame.*
+        """
+        self._playing = False
+        self._CurrentFrameIndex = 0
+
+        if self._after_id:
+            self._label.after_cancel(self._after_id)
+            self._after_id = None
+
+    def Pause(self):
+        """
+        # Pause the BetterGIF animation.
+        
+        *Note: Pausing is different from stopping. For a different result, use Stop().*
+
+        *Pause: End the animation, but stay in the same frame. | Stop: End the current animation and reset to the first frame.*
+        """
+        self._playing = False
+
+        if self._after_id:
+            self._label.after_cancel(self._after_id)
+            self._after_id = None
+
+
+    def _AnimateOnce(self):
+        if self._playing:
+            if not self._TotalFrames > 0:
+                raise IndexError("Could not properly animate GIF file as the amount of frames was not greater than zero. Did you try checking the file for corruption?")
+
+            if self._CurrentFrameIndex < self._TotalFrames:
+                frame = self._frames[self._CurrentFrameIndex]
+                duration = self._duration[self._CurrentFrameIndex] // self._speed
+
+                self._CurrentPic = _imgtk.PhotoImage(frame)
+                self._label.config(image=self._CurrentPic)
+
+                self._CurrentFrameIndex += 1
+
+                if self._CurrentFrameIndex < self._TotalFrames:
+                    self._after_id = self._label.after(duration, self._AnimateOnce)
+
+                else:
+                    if self._completed is not None:
+                        self._completed()
+
+    def _AnimateLooped(self):
+        if self._playing:
+            if self._TotalFrames > 0:
+                frame = self._frames[self._CurrentFrameIndex]
+                duration = self._duration[self._CurrentFrameIndex] // self._speed
+
+                self._CurrentPic = _imgtk.PhotoImage(frame)
+                self._label.config(image=self._CurrentPic)
+
+                self._CurrentFrameIndex = (self._CurrentFrameIndex + 1) % self._TotalFrames
+
+                self._after_id = self._label.after(duration, self._AnimateLooped)
+            else:
+                raise IndexError("Could not properly animate GIF file as the amount of frames was not greater than zero. Did you try checking the file for corruption?")
+#endregion
+
+#region Function to Automatically Create Anmated GIF
+def CreateBetterGIF(FilePath:str, TargetLabel, LoopGif:bool=False, OnCompletion:function=None):
+    return BetterGIF(FilePath, TargetLabel, True, LoopGif, OnCompletion)
+
+#endregion
+#endregion
+
+
 #############################################
 # time to do some extra stuff that's cool too
 #############################################
@@ -2263,6 +2462,9 @@ StreamAudio         -> Create and return a BetterAudio object and automatically 
 {"-" * 5}
 BetterVideo (CLASS) -> Create a BetterVideo object that automatically handles full video playback.
 CreateVideo         -> Runs the BetterVideo class to create and return a BetterVideo object.
+{"-" * 5}
+BetterGIF (CLASS)  -> Create a BetterGIF object that automatically handles GIF rendeing and looping with transparency.
+CreateBetterGIF    -> Create and return a BetterGIF class that automatically plays.
 {"-="*40}
 Tkinter (tk) Specific Functions:
 {"-"*5}
